@@ -1,6 +1,7 @@
 package com.soflex.lectorpatente
 
 import android.annotation.SuppressLint
+import android.util.Log
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import com.google.mlkit.vision.common.InputImage
@@ -12,6 +13,10 @@ class TextRecognitionAnalyzer(
 ) : ImageAnalysis.Analyzer {
 
     private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+
+    companion object {
+        private const val TAG = "TextRecognition"
+    }
 
     @SuppressLint("UnsafeOptInUsageError")
     override fun analyze(imageProxy: ImageProxy) {
@@ -26,10 +31,15 @@ class TextRecognitionAnalyzer(
                 .addOnSuccessListener { visionText ->
                     val detectedText = visionText.text
                     if (detectedText.isNotEmpty()) {
+                        Log.d(TAG, "═══════════════════════════════════")
+                        Log.d(TAG, "Texto detectado (crudo):")
+                        Log.d(TAG, detectedText)
+                        Log.d(TAG, "═══════════════════════════════════")
                         onTextDetected(detectedText)
                     }
                 }
                 .addOnFailureListener { e ->
+                    Log.e(TAG, "Error en reconocimiento de texto", e)
                     e.printStackTrace()
                 }
                 .addOnCompleteListener {

@@ -8,21 +8,28 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.soflex.lectorpatente.ui.theme.LectorPatenteTheme
+
+data class DetectedPlate(
+    val plate: String,
+    val isVerified: Boolean = false
+)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -86,18 +93,22 @@ fun LicensePlateReaderApp() {
 
 @Composable
 fun LicensePlateScanner(modifier: Modifier = Modifier) {
-    var detectedPlates by remember { mutableStateOf<List<String>>(emptyList()) }
-    var lastDetectedText by remember { mutableStateOf("") }
+    var detectedPlates by remember { mutableStateOf<List<DetectedPlate>>(emptyList()) }
+    var lastDetectedText by remember { mutableStateOf("Esperando detección...") }
 
     Box(modifier = modifier.fillMaxSize()) {
         // Vista previa de la cámara
         CameraPreview(
             modifier = Modifier.fillMaxSize(),
             onTextDetected = { text ->
-                lastDetectedText = text
+                lastDetectedText = text.take(200) // Limitar a 200 caracteres
                 val plates = LicensePlateValidator.extractLicensePlates(text)
                 if (plates.isNotEmpty()) {
-                    detectedPlates = (plates + detectedPlates).distinct().take(10)
+                    val currentPlateStrings = detectedPlates.map { it.plate }
+                    val newPlates = plates
+                        .filter { it !in currentPlateStrings }
+                        .map { DetectedPlate(it, false) }
+                    detectedPlates = (newPlates + detectedPlates).take(10)
                 }
             }
         )
@@ -109,20 +120,51 @@ fun LicensePlateScanner(modifier: Modifier = Modifier) {
                 .padding(16.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
-            // Instrucciones en la parte superior
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
-                ),
-                shape = RoundedCornerShape(12.dp)
+            Column(
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text(
-                    text = "Apunta la cámara hacia una patente",
-                    modifier = Modifier.padding(16.dp),
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Bold
-                )
+                // Instrucciones en la parte superior
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        text = "Apunta la cámara hacia una patente",
+                        modifier = Modifier.padding(16.dp),
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                // Vista de debug con texto detectado
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.9f)
+                    ),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp)
+                    ) {
+                        Text(
+                            text = "Debug - Texto detectado:",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = lastDetectedText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f),
+                            modifier = Modifier.heightIn(max = 60.dp)
+                        )
+                    }
+                }
             }
 
             // Lista de patentes detectadas en la parte inferior
@@ -137,19 +179,45 @@ fun LicensePlateScanner(modifier: Modifier = Modifier) {
                     Column(
                         modifier = Modifier.padding(16.dp)
                     ) {
-                        Text(
-                            text = "Patentes Detectadas:",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(bottom = 8.dp)
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Patentes Detectadas:",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+
+                            IconButton(onClick = { detectedPlates = emptyList() }) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = "Limpiar todo",
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
 
                         LazyColumn(
                             modifier = Modifier.heightIn(max = 200.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            items(detectedPlates) { plate ->
-                                PlateItem(plate)
+                            items(detectedPlates) { detectedPlate ->
+                                PlateItem(
+                                    detectedPlate = detectedPlate,
+                                    onToggleVerified = {
+                                        detectedPlates = detectedPlates.map { plate ->
+                                            if (plate.plate == detectedPlate.plate) {
+                                                plate.copy(isVerified = !plate.isVerified)
+                                            } else {
+                                                plate
+                                            }
+                                        }
+                                    }
+                                )
                             }
                         }
                     }
@@ -160,13 +228,23 @@ fun LicensePlateScanner(modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun PlateItem(plate: String) {
-    val plateType = LicensePlateValidator.getPlateType(plate)
+fun PlateItem(
+    detectedPlate: DetectedPlate,
+    onToggleVerified: () -> Unit
+) {
+    val plateType = LicensePlateValidator.getPlateType(detectedPlate.plate)
+    val backgroundColor = if (detectedPlate.isVerified) {
+        MaterialTheme.colorScheme.tertiaryContainer
+    } else {
+        MaterialTheme.colorScheme.primaryContainer
+    }
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onToggleVerified() },
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer
+            containerColor = backgroundColor
         ),
         shape = RoundedCornerShape(8.dp)
     ) {
@@ -177,9 +255,9 @@ fun PlateItem(plate: String) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = plate,
+                    text = detectedPlate.plate,
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -188,6 +266,15 @@ fun PlateItem(plate: String) {
                     text = plateType,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                )
+            }
+
+            if (detectedPlate.isVerified) {
+                Icon(
+                    imageVector = Icons.Default.CheckCircle,
+                    contentDescription = "Verificado",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(32.dp)
                 )
             }
         }
