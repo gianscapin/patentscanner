@@ -16,6 +16,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.outlined.CameraAlt
+import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -24,6 +26,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.launch
 import com.soflex.lectorpatente.ui.theme.LectorPatenteTheme
 
 data class DetectedPlate(
@@ -93,8 +96,19 @@ fun LicensePlateReaderApp() {
 
 @Composable
 fun LicensePlateScanner(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
     var detectedPlates by remember { mutableStateOf<List<DetectedPlate>>(emptyList()) }
     var lastDetectedText by remember { mutableStateOf("Esperando detección...") }
+    var shouldCapture by remember { mutableStateOf(false) }
+    var lastCapturedBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var showCaptureSuccess by remember { mutableStateOf(false) }
+    var captureCount by remember { mutableStateOf(0) }
+    var showGalleryDialog by remember { mutableStateOf(false) }
+
+    // Auto-captura cuando se detecta una nueva patente
+    var autoCaptureEnabled by remember { mutableStateOf(false) }
 
     Box(modifier = modifier.fillMaxSize()) {
         // Vista previa de la cámara
@@ -108,7 +122,42 @@ fun LicensePlateScanner(modifier: Modifier = Modifier) {
                     val newPlates = plates
                         .filter { it !in currentPlateStrings }
                         .map { DetectedPlate(it, false) }
-                    detectedPlates = (newPlates + detectedPlates).take(10)
+
+                    if (newPlates.isNotEmpty()) {
+                        detectedPlates = (newPlates + detectedPlates).take(10)
+
+                        // Auto-capturar si está habilitado
+                        if (autoCaptureEnabled) {
+                            shouldCapture = true
+                        }
+                    }
+                }
+            },
+            onImageCaptured = { bitmap ->
+                if (shouldCapture) {
+                    scope.launch {
+                        lastCapturedBitmap = bitmap
+                        val detectedText = if (detectedPlates.isNotEmpty()) {
+                            detectedPlates.first().plate
+                        } else {
+                            null
+                        }
+
+                        // Guardar en almacenamiento interno (no requiere permisos)
+                        ImageCaptureManager.saveBitmapToInternalStorage(
+                            context,
+                            bitmap,
+                            detectedText
+                        )
+
+                        shouldCapture = false
+                        showCaptureSuccess = true
+                        captureCount++
+
+                        // Ocultar mensaje después de 2 segundos
+                        kotlinx.coroutines.delay(2000)
+                        showCaptureSuccess = false
+                    }
                 }
             }
         )
@@ -167,18 +216,19 @@ fun LicensePlateScanner(modifier: Modifier = Modifier) {
                 }
             }
 
-            // Lista de patentes detectadas en la parte inferior
-            if (detectedPlates.isNotEmpty()) {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
-                    ),
-                    shape = RoundedCornerShape(12.dp)
+            // Card inferior con patentes y botones
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
+                ),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp)
                 ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp)
-                    ) {
+                    // Sección de patentes detectadas
+                    if (detectedPlates.isNotEmpty()) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -202,7 +252,7 @@ fun LicensePlateScanner(modifier: Modifier = Modifier) {
                         Spacer(modifier = Modifier.height(8.dp))
 
                         LazyColumn(
-                            modifier = Modifier.heightIn(max = 200.dp),
+                            modifier = Modifier.heightIn(max = 150.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             items(detectedPlates) { detectedPlate ->
@@ -220,9 +270,115 @@ fun LicensePlateScanner(modifier: Modifier = Modifier) {
                                 )
                             }
                         }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+                    }
+
+                    // Botones de acción
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        // Botón de captura manual
+                        Button(
+                            onClick = { shouldCapture = true },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.CameraAlt,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Capturar")
+                        }
+
+                        // Botón para ver galería
+                        Button(
+                            onClick = { showGalleryDialog = true },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.PhotoLibrary,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Galería")
+                        }
                     }
                 }
             }
+        }
+
+        // Mensaje de captura exitosa
+        if (showCaptureSuccess) {
+            Card(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 80.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer
+                )
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CheckCircle,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "Captura guardada ($captureCount)",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+
+        // Switch para auto-captura en la esquina superior derecha
+        Card(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
+            )
+        ) {
+            Row(
+                modifier = Modifier.padding(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "Auto",
+                    style = MaterialTheme.typography.labelSmall
+                )
+                Switch(
+                    checked = autoCaptureEnabled,
+                    onCheckedChange = { autoCaptureEnabled = it },
+                    modifier = Modifier.height(24.dp)
+                )
+            }
+        }
+
+        // Diálogo de galería de capturas
+        if (showGalleryDialog) {
+            CapturesGalleryDialog(
+                onDismiss = { showGalleryDialog = false }
+            )
         }
     }
 }

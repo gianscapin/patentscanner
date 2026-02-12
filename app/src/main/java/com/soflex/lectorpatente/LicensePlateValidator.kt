@@ -6,8 +6,9 @@ object LicensePlateValidator {
 
     private const val TAG = "LicensePlateValidator"
 
-    // Formato antiguo: ABC 123 o ABCD 123 (3 letras + D/T/C opcional + 3 números)
-    private val oldFormatRegex = Regex("^[A-Z]{3}[DTC]?\\s?\\d{3}$")
+    // Formato antiguo: ABC 123 o ABCD 123 o NZL D 783 o NZLD 783 o NZL D783
+    // (3 letras + espacio opcional + D/T/C opcional + espacio opcional + 3 números)
+    private val oldFormatRegex = Regex("^[A-Z]{3}\\s?[DTC]?\\s?\\d{3}$")
 
     // Formato nuevo Mercosur: AB 123 CD o AB 123D CD (2 letras + 3 números + D/T/C opcional + 2 letras)
     private val newFormatRegex = Regex("^[A-Z]{2}\\s?\\d{3}[DTC]?\\s?[A-Z]{2}$")
@@ -23,9 +24,12 @@ object LicensePlateValidator {
 
         val plates = mutableListOf<String>()
 
+        // Aplicar correcciones contextuales antes de normalizar
+        val correctedText = applyContextualCorrections(text.uppercase())
+        Log.d(TAG, "Texto con correcciones: '$correctedText'")
+
         // Normalizar el texto: eliminar caracteres especiales y convertir a mayúsculas
-        val normalizedText = text
-            .uppercase()
+        val normalizedText = correctedText
             .replace(Regex("[^A-Z0-9\\s\\n]"), "")
 
         Log.d(TAG, "Texto normalizado: '$normalizedText'")
@@ -124,9 +128,9 @@ object LicensePlateValidator {
             cleaned.matches(Regex("^[A-Z]{3}\\d{3}$")) -> {
                 "${cleaned.substring(0, 3)} ${cleaned.substring(3, 6)}"
             }
-            // Formato antiguo con D/T/C: ABCD 123 o ABCT 123 o ABCC 123
+            // Formato antiguo con D/T/C: ABCD 123 o NZL D 783 (manteniendo D separada)
             cleaned.matches(Regex("^[A-Z]{3}[DTC]\\d{3}$")) -> {
-                "${cleaned.substring(0, 4)} ${cleaned.substring(4, 7)}"
+                "${cleaned.substring(0, 3)} ${cleaned.substring(3, 4)} ${cleaned.substring(4, 7)}"
             }
             // Formato nuevo sin D/T/C: AB 123 CD
             cleaned.matches(Regex("^[A-Z]{2}\\d{3}[A-Z]{2}$")) -> {
@@ -138,6 +142,46 @@ object LicensePlateValidator {
             }
             else -> cleaned
         }
+    }
+
+    /**
+     * Aplica correcciones contextuales para errores comunes de OCR
+     * Solo corrige caracteres cuando el contexto indica claramente un error
+     */
+    private fun applyContextualCorrections(text: String): String {
+        var corrected = text
+
+        // Patrón 1: Detectar guiones/guiones bajos entre dígitos y letras en formato Mercosur
+        // Ejemplo: "AA 089-JP" → "AA 089D JP" o "AA 089_JP" → "AA 089D JP"
+        // Patrón: 2 letras + espacio opcional + 3 dígitos + [guión/underscore/pipe] + 2 letras
+        corrected = corrected.replace(
+            Regex("([A-Z]{2}\\s?\\d{3})[-_|]([A-Z]{2})"),
+            "$1D$2"
+        )
+
+        // Patrón 2: Detectar cuando falta la D en formato Mercosur pero el patrón es claro
+        // Ejemplo: "AA 089 JP" con 2 letras + 3 dígitos + 2 letras podría ser "AA 089D JP"
+        // Solo si la primera letra después de los dígitos podría ser D pero se perdió
+        // Este patrón es más conservador y solo lo aplicamos si detectamos el patrón exacto
+
+        // Patrón 3: Corregir números mal detectados que claramente deberían ser letras
+        // En contexto de patente Mercosur: si después de 3 dígitos hay un número solo, probablemente sea una D
+        // Ejemplo: "AA 089 0JP" → "AA 089 DJP" (el 0 aislado probablemente es D)
+        corrected = corrected.replace(
+            Regex("([A-Z]{2}\\s?\\d{3})\\s?0([A-Z]{2})"),
+            "$1D$2"
+        )
+
+        // Patrón 4: Espacios extras o faltantes entre componentes
+        // Normalizar "AA089DJP" o "AA  089  D  JP" a formato consistente
+        corrected = corrected.replace(
+            Regex("([A-Z]{2})\\s*(\\d{3})\\s*([DTC]?)\\s*([A-Z]{2})"),
+            "$1 $2$3 $4"
+        )
+
+        Log.d(TAG, "Correcciones aplicadas: '$text' → '$corrected'")
+
+        return corrected
     }
 
     /**
