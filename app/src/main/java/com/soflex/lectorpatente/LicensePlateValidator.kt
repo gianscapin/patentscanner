@@ -19,86 +19,91 @@ object LicensePlateValidator {
      * @return Lista de patentes válidas encontradas
      */
     fun extractLicensePlates(text: String): List<String> {
-        Log.d(TAG, "───────────────────────────────────")
-        Log.d(TAG, "Procesando texto...")
+        try {
+            Log.d(TAG, "───────────────────────────────────")
+            Log.d(TAG, "Procesando texto...")
 
-        val plates = mutableListOf<String>()
+            val plates = mutableListOf<String>()
 
-        // Aplicar correcciones contextuales antes de normalizar
-        val correctedText = applyContextualCorrections(text.uppercase())
-        Log.d(TAG, "Texto con correcciones: '$correctedText'")
+            // Aplicar correcciones contextuales antes de normalizar
+            val correctedText = applyContextualCorrections(text.uppercase())
+            Log.d(TAG, "Texto con correcciones: '$correctedText'")
 
-        // Normalizar el texto: eliminar caracteres especiales y convertir a mayúsculas
-        val normalizedText = correctedText
-            .replace(Regex("[^A-Z0-9\\s\\n]"), "")
+            // Normalizar el texto: eliminar caracteres especiales y convertir a mayúsculas
+            val normalizedText = correctedText
+                .replace(Regex("[^A-Z0-9\\s\\n]"), "")
 
-        Log.d(TAG, "Texto normalizado: '$normalizedText'")
-        Log.d(TAG, "───────────────────────────────────")
+            Log.d(TAG, "Texto normalizado: '$normalizedText'")
+            Log.d(TAG, "───────────────────────────────────")
 
-        // Buscar en líneas individuales
-        normalizedText.lines().forEachIndexed { index, line ->
-            val cleanLine = line.trim().replace(Regex("\\s+"), " ")
-            if (cleanLine.isNotEmpty()) {
-                Log.d(TAG, "Línea $index: '$cleanLine'")
-                if (isValidLicensePlate(cleanLine)) {
-                    val formatted = formatLicensePlate(cleanLine)
-                    plates.add(formatted)
-                    Log.d(TAG, "  ✓ VÁLIDA: $formatted")
-                } else {
-                    Log.d(TAG, "  ✗ No válida")
-                }
-            }
-        }
-
-        // Buscar en palabras contiguas (para casos sin espacios o con saltos de línea)
-        val words = normalizedText.split(Regex("\\s+")).filter { it.isNotEmpty() }
-        Log.d(TAG, "Palabras encontradas: ${words.size}")
-
-        for (i in words.indices) {
-            // Revisar palabra individual
-            val word = words[i]
-            if (word.length >= 6) {
-                Log.d(TAG, "Probando palabra: '$word'")
-                if (isValidLicensePlate(word)) {
-                    val formatted = formatLicensePlate(word)
-                    plates.add(formatted)
-                    Log.d(TAG, "  ✓ VÁLIDA: $formatted")
-                }
-            }
-
-            // Revisar combinación de 2-3 palabras contiguas
-            if (i < words.size - 1) {
-                val combined = words[i] + words[i + 1]
-                if (combined.length in 6..8) {
-                    Log.d(TAG, "Probando combinación 2: '$combined'")
-                    if (isValidLicensePlate(combined)) {
-                        val formatted = formatLicensePlate(combined)
+            // Buscar en líneas individuales
+            normalizedText.lines().forEachIndexed { index, line ->
+                val cleanLine = line.trim().replace(Regex("\\s+"), " ")
+                if (cleanLine.isNotEmpty()) {
+                    Log.d(TAG, "Línea $index: '$cleanLine'")
+                    if (isValidLicensePlate(cleanLine)) {
+                        val formatted = formatLicensePlate(cleanLine)
                         plates.add(formatted)
                         Log.d(TAG, "  ✓ VÁLIDA: $formatted")
+                    } else {
+                        Log.d(TAG, "  ✗ No válida")
                     }
                 }
             }
 
-            if (i < words.size - 2) {
-                val combined = words[i] + words[i + 1] + words[i + 2]
-                if (combined.length in 6..8) {
-                    Log.d(TAG, "Probando combinación 3: '$combined'")
-                    if (isValidLicensePlate(combined)) {
-                        val formatted = formatLicensePlate(combined)
+            // Buscar en palabras contiguas (para casos sin espacios o con saltos de línea)
+            val words = normalizedText.split(Regex("\\s+")).filter { it.isNotEmpty() }
+            Log.d(TAG, "Palabras encontradas: ${words.size}")
+
+            for (i in words.indices) {
+                // Revisar palabra individual
+                val word = words[i]
+                if (word.length >= 6) {
+                    Log.d(TAG, "Probando palabra: '$word'")
+                    if (isValidLicensePlate(word)) {
+                        val formatted = formatLicensePlate(word)
                         plates.add(formatted)
                         Log.d(TAG, "  ✓ VÁLIDA: $formatted")
                     }
                 }
+
+                // Revisar combinación de 2-3 palabras contiguas
+                if (i < words.size - 1) {
+                    val combined = words[i] + words[i + 1]
+                    if (combined.length in 6..8) {
+                        Log.d(TAG, "Probando combinación 2: '$combined'")
+                        if (isValidLicensePlate(combined)) {
+                            val formatted = formatLicensePlate(combined)
+                            plates.add(formatted)
+                            Log.d(TAG, "  ✓ VÁLIDA: $formatted")
+                        }
+                    }
+                }
+
+                if (i < words.size - 2) {
+                    val combined = words[i] + words[i + 1] + words[i + 2]
+                    if (combined.length in 6..8) {
+                        Log.d(TAG, "Probando combinación 3: '$combined'")
+                        if (isValidLicensePlate(combined)) {
+                            val formatted = formatLicensePlate(combined)
+                            plates.add(formatted)
+                            Log.d(TAG, "  ✓ VÁLIDA: $formatted")
+                        }
+                    }
+                }
             }
+
+            val result = plates.distinct()
+            Log.d(TAG, "───────────────────────────────────")
+            Log.d(TAG, "Patentes encontradas: ${result.size}")
+            result.forEach { Log.d(TAG, "  → $it") }
+            Log.d(TAG, "═══════════════════════════════════")
+
+            return result
+        } catch (e: Exception) {
+            Log.e(TAG, "Error en extractLicensePlates para texto: '$text' -> ${e.message}", e)
+            return emptyList()
         }
-
-        val result = plates.distinct()
-        Log.d(TAG, "───────────────────────────────────")
-        Log.d(TAG, "Patentes encontradas: ${result.size}")
-        result.forEach { Log.d(TAG, "  → $it") }
-        Log.d(TAG, "═══════════════════════════════════")
-
-        return result
     }
 
     /**
@@ -149,37 +154,28 @@ object LicensePlateValidator {
      * Solo corrige caracteres cuando el contexto indica claramente un error
      */
     private fun applyContextualCorrections(text: String): String {
-        var corrected = text
+        var corrected = text.uppercase() // Convert to uppercase first
 
-        // Patrón 1: Detectar guiones/guiones bajos entre dígitos y letras en formato Mercosur
-        // Ejemplo: "AA 089-JP" → "AA 089D JP" o "AA 089_JP" → "AA 089D JP"
-        // Patrón: 2 letras + espacio opcional + 3 dígitos + [guión/underscore/pipe] + 2 letras
-        corrected = corrected.replace(
-            Regex("([A-Z]{2}\\s?\\d{3})[-_|]([A-Z]{2})"),
-            "$1D$2"
-        )
+        // Patrón 1: Detectar guiones/guiones bajos/pipes como 'D' en formato Mercosur (XN YYY_XX)
+        // Ejemplo: "AA 089-JP" -> "AA 089D JP"
+        corrected = Regex("([A-Z]{2}\\s*\\d{3})[-_|]([A-Z]{2})").replace(corrected) { matchResult ->
+            val group1 = matchResult.groups[1]?.value ?: ""
+            val group2 = matchResult.groups[2]?.value ?: ""
+            "$group1" + "D" + "$group2"
+        }
 
-        // Patrón 2: Detectar cuando falta la D en formato Mercosur pero el patrón es claro
-        // Ejemplo: "AA 089 JP" con 2 letras + 3 dígitos + 2 letras podría ser "AA 089D JP"
-        // Solo si la primera letra después de los dígitos podría ser D pero se perdió
-        // Este patrón es más conservador y solo lo aplicamos si detectamos el patrón exacto
+        // Patrón 2: Detectar '0' como 'D' en formato Mercosur cuando está en la posición de D
+        // Ejemplo: "AA 089 0JP" -> "AA 089D JP"
+        corrected = Regex("([A-Z]{2}\\s*\\d{3})\\s*0([A-Z]{2})").replace(corrected) { matchResult ->
+            val group1 = matchResult.groups[1]?.value ?: ""
+            val group2 = matchResult.groups[2]?.value ?: ""
+            "$group1" + "D" + "$group2"
+        }
 
-        // Patrón 3: Corregir números mal detectados que claramente deberían ser letras
-        // En contexto de patente Mercosur: si después de 3 dígitos hay un número solo, probablemente sea una D
-        // Ejemplo: "AA 089 0JP" → "AA 089 DJP" (el 0 aislado probablemente es D)
-        corrected = corrected.replace(
-            Regex("([A-Z]{2}\\s?\\d{3})\\s?0([A-Z]{2})"),
-            "$1D$2"
-        )
+        // Patrón 3: Eliminar espacios adicionales
+        corrected = corrected.replace(Regex("\\s+"), " ")
 
-        // Patrón 4: Espacios extras o faltantes entre componentes
-        // Normalizar "AA089DJP" o "AA  089  D  JP" a formato consistente
-        corrected = corrected.replace(
-            Regex("([A-Z]{2})\\s*(\\d{3})\\s*([DTC]?)\\s*([A-Z]{2})"),
-            "$1 $2$3 $4"
-        )
-
-        Log.d(TAG, "Correcciones aplicadas: '$text' → '$corrected'")
+        Log.d(TAG, "Correcciones aplicadas: '${text.uppercase()}' → '$corrected'")
 
         return corrected
     }

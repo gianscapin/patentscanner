@@ -3,11 +3,16 @@ package com.soflex.lectorpatente
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -35,20 +40,50 @@ data class DetectedPlate(
 )
 
 class MainActivity : ComponentActivity() {
+    private val paddleOCR = PaddleOCRPredictor.getInstance()
+    val tesseract = TesseractPredictor.getInstance()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Estado para controlar la inicialización de PaddleOCR
+        val isPaddleOcrInitialized = mutableStateOf(false)
+
+        // Inicializar PaddleOCR en background
+        lifecycleScope.launch(Dispatchers.IO) {
+            Log.d("MainActivity", "Inicializando PaddleOCR...")
+            val success = paddleOCR.init(applicationContext, numThreads = 4)
+
+            withContext(Dispatchers.Main) {
+                if (success) {
+                    Log.d("MainActivity", "✅ PaddleOCR inicializado correctamente")
+                    isPaddleOcrInitialized.value = true
+                } else {
+                    Log.e("MainActivity", "❌ Error inicializando PaddleOCR")
+                }
+            }
+        }
+
         enableEdgeToEdge()
         setContent {
             LectorPatenteTheme {
-                LicensePlateReaderApp()
+                // Pasar el estado al composable principal
+                LicensePlateReaderApp(isPaddleOcrInitialized = isPaddleOcrInitialized.value)
             }
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        paddleOCR.release()
+        tesseract.release()
+        Log.d("MainActivity", "PaddleOCR y Tesseract liberados")
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LicensePlateReaderApp() {
+fun LicensePlateReaderApp(isPaddleOcrInitialized: Boolean) {
     val context = LocalContext.current
     var hasCameraPermission by remember {
         mutableStateOf(
@@ -84,7 +119,10 @@ fun LicensePlateReaderApp() {
         }
     ) { innerPadding ->
         if (hasCameraPermission) {
-            LicensePlateScanner(modifier = Modifier.padding(innerPadding))
+            LicensePlateScanner(
+                modifier = Modifier.padding(innerPadding),
+                isPaddleOcrInitialized = isPaddleOcrInitialized
+            )
         } else {
             PermissionDeniedScreen(
                 modifier = Modifier.padding(innerPadding),
@@ -95,7 +133,7 @@ fun LicensePlateReaderApp() {
 }
 
 @Composable
-fun LicensePlateScanner(modifier: Modifier = Modifier) {
+fun LicensePlateScanner(modifier: Modifier = Modifier, isPaddleOcrInitialized: Boolean) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -110,10 +148,34 @@ fun LicensePlateScanner(modifier: Modifier = Modifier) {
     // Auto-captura cuando se detecta una nueva patente
     var autoCaptureEnabled by remember { mutableStateOf(false) }
 
+    // Motor OCR a usar (ML Kit por defecto, PaddleOCR opcional)
+    var ocrEngine by remember { mutableStateOf(OCREngine.ML_KIT) }
+
+    // Inicialización lazy de Tesseract (solo cuando se selecciona)
+    var tesseractInitialized by remember { mutableStateOf(false) }
+
+    LaunchedEffect(ocrEngine) {
+        if (ocrEngine == OCREngine.TESSERACT && !tesseractInitialized) {
+            scope.launch(Dispatchers.IO) {
+                Log.d("MainActivity", "Inicializando Tesseract (lazy)...")
+                tesseractInitialized = (context as MainActivity).tesseract.init(context)
+
+                withContext(Dispatchers.Main) {
+                    if (tesseractInitialized) {
+                        Log.d("MainActivity", "✅ Tesseract inicializado correctamente")
+                    } else {
+                        Log.e("MainActivity", "❌ Error inicializando Tesseract")
+                    }
+                }
+            }
+        }
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
         // Vista previa de la cámara
         CameraPreview(
             modifier = Modifier.fillMaxSize(),
+            ocrEngine = ocrEngine,
             onTextDetected = { text ->
                 lastDetectedText = text.take(200) // Limitar a 200 caracteres
                 val plates = LicensePlateValidator.extractLicensePlates(text)
@@ -348,29 +410,120 @@ fun LicensePlateScanner(modifier: Modifier = Modifier) {
             }
         }
 
-        // Switch para auto-captura en la esquina superior derecha
-        Card(
+        // Controles en la esquina superior derecha
+        Column(
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(16.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
-            )
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Row(
-                modifier = Modifier.padding(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            // Switch para auto-captura
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
+                )
             ) {
-                Text(
-                    text = "Auto",
-                    style = MaterialTheme.typography.labelSmall
+                Row(
+                    modifier = Modifier.padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "Auto",
+                        style = MaterialTheme.typography.labelSmall
+                    )
+                    Switch(
+                        checked = autoCaptureEnabled,
+                        onCheckedChange = { autoCaptureEnabled = it },
+                        modifier = Modifier.height(24.dp)
+                    )
+                }
+            }
+
+            // Selector de motor OCR con 3 opciones
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f)
                 )
-                Switch(
-                    checked = autoCaptureEnabled,
-                    onCheckedChange = { autoCaptureEnabled = it },
-                    modifier = Modifier.height(24.dp)
-                )
+            ) {
+                Column(
+                    modifier = Modifier.padding(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Text(
+                        text = "Motor OCR:",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        // Botón ML Kit
+                        Button(
+                            onClick = {
+                                ocrEngine = OCREngine.ML_KIT
+                                detectedPlates = emptyList()
+                                lastDetectedText = "Esperando detección..."
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (ocrEngine == OCREngine.ML_KIT)
+                                    MaterialTheme.colorScheme.primaryContainer
+                                else
+                                    MaterialTheme.colorScheme.surfaceVariant
+                            ),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                "ML Kit",
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+
+                        // Botón PaddleOCR
+                        Button(
+                            onClick = {
+                                ocrEngine = OCREngine.PADDLE_OCR
+                                detectedPlates = emptyList()
+                                lastDetectedText = "Esperando detección..."
+                            },
+                            enabled = isPaddleOcrInitialized, // Use the new state here
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (ocrEngine == OCREngine.PADDLE_OCR)
+                                    MaterialTheme.colorScheme.primaryContainer
+                                else
+                                    MaterialTheme.colorScheme.surfaceVariant
+                            ),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                "Paddle",
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+
+                        // Botón Tesseract
+                        Button(
+                            onClick = {
+                                ocrEngine = OCREngine.TESSERACT
+                                detectedPlates = emptyList()
+                                lastDetectedText = "Esperando detección..."
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (ocrEngine == OCREngine.TESSERACT)
+                                    MaterialTheme.colorScheme.primaryContainer
+                                else
+                                    MaterialTheme.colorScheme.surfaceVariant
+                            ),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                "Tesseract",
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                    }
+                }
             }
         }
 

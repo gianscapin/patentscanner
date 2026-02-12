@@ -16,6 +16,7 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -25,11 +26,18 @@ import androidx.core.content.ContextCompat
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
+enum class OCREngine {
+    ML_KIT,
+    PADDLE_OCR,
+    TESSERACT
+}
+
 @Composable
 fun CameraPreview(
     modifier: Modifier = Modifier,
     onTextDetected: (String) -> Unit,
-    onImageCaptured: ((android.graphics.Bitmap) -> Unit)? = null
+    onImageCaptured: ((android.graphics.Bitmap) -> Unit)? = null,
+    ocrEngine: OCREngine = OCREngine.ML_KIT  // ML Kit por defecto (PaddleOCR en desarrollo)
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -41,83 +49,84 @@ fun CameraPreview(
         }
     }
 
-    AndroidView(
-        modifier = modifier,
-        factory = { ctx ->
-            val previewView = PreviewView(ctx).apply {
-                layoutParams = ViewGroup.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT
+    val previewView = remember {
+        PreviewView(context).apply {
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            implementationMode = PreviewView.ImplementationMode.PERFORMANCE
+        }
+    }
+
+    DisposableEffect(ocrEngine, lifecycleOwner) {
+        val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
+        val cameraProvider = cameraProviderFuture.get()
+
+        val preview = Preview.Builder().build().also {
+            it.setSurfaceProvider(previewView.surfaceProvider)
+        }
+
+        val resolutionSelector = ResolutionSelector.Builder()
+            .setResolutionStrategy(
+                ResolutionStrategy(
+                    Size(1280, 720),
+                    ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER
                 )
-                implementationMode = PreviewView.ImplementationMode.PERFORMANCE
+            )
+            .build()
+
+        val imageAnalyzer = ImageAnalysis.Builder()
+            .setResolutionSelector(resolutionSelector)
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
+            .build()
+            .also {
+                val analyzer = when (ocrEngine) {
+                    OCREngine.ML_KIT -> TextRecognitionAnalyzer(
+                        onTextDetected = onTextDetected,
+                        enablePreprocessing = true,
+                        onImageProcessed = onImageCaptured
+                    )
+                    OCREngine.PADDLE_OCR -> PaddleOCRAnalyzer(
+                        onTextDetected = onTextDetected,
+                        enablePreprocessing = true,
+                        onImageProcessed = onImageCaptured
+                    )
+                    OCREngine.TESSERACT -> TesseractAnalyzer(
+                        onTextDetected = onTextDetected,
+                        enablePreprocessing = true,
+                        onImageProcessed = onImageCaptured
+                    )
+                }
+                it.setAnalyzer(cameraExecutor, analyzer)
             }
 
-            val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
+        val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
 
-            cameraProviderFuture.addListener({
-                val cameraProvider = cameraProviderFuture.get()
-
-                // Configuración de preview con calidad optimizada
-                val preview = Preview.Builder()
-                    .build()
-                    .also {
-                        it.setSurfaceProvider(previewView.surfaceProvider)
-                    }
-
-                // Resolución óptima para OCR: 1280x720
-                val resolutionSelector = ResolutionSelector.Builder()
-                    .setResolutionStrategy(
-                        ResolutionStrategy(
-                            Size(1280, 720),
-                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER
-                        )
-                    )
-                    .build()
-
-                // Configuración de análisis de imagen optimizada para OCR
-                val imageAnalyzer = ImageAnalysis.Builder()
-                    .setResolutionSelector(resolutionSelector)
-                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                    .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
-                    .build()
-                    .also {
-                        it.setAnalyzer(
-                            cameraExecutor,
-                            TextRecognitionAnalyzer(
-                                onTextDetected = onTextDetected,
-                                enablePreprocessing = true,
-                                onImageProcessed = onImageCaptured
-                            )
-                        )
-                    }
-
-                val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-
-                try {
-                    cameraProvider.unbindAll()
-
-                    // Bind camera y obtener control
-                    val camera = cameraProvider.bindToLifecycle(
-                        lifecycleOwner,
-                        cameraSelector,
-                        preview,
-                        imageAnalyzer
-                    )
-
-                    // Configurar enfoque continuo y tap-to-focus
-                    setupCameraControl(camera, previewView)
-
-                    Log.d("CameraPreview", "Cámara configurada exitosamente con resolución optimizada")
-
-                } catch (e: Exception) {
-                    Log.e("CameraPreview", "Error al configurar la cámara", e)
-                    e.printStackTrace()
-                }
-
-            }, ContextCompat.getMainExecutor(ctx))
-
-            previewView
+        try {
+            cameraProvider.unbindAll()
+            val camera = cameraProvider.bindToLifecycle(
+                lifecycleOwner,
+                cameraSelector,
+                preview,
+                imageAnalyzer
+            )
+            setupCameraControl(camera, previewView)
+            Log.d("CameraPreview", "Cámara re-configurada para: $ocrEngine")
+        } catch (e: Exception) {
+            Log.e("CameraPreview", "Error al re-configurar la cámara", e)
         }
+
+        onDispose {
+            Log.d("CameraPreview", "Liberando cámara para: $ocrEngine")
+            cameraProvider.unbindAll()
+        }
+    }
+
+    AndroidView(
+        modifier = modifier,
+        factory = { previewView }
     )
 }
 

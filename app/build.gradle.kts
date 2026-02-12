@@ -73,6 +73,12 @@ android {
         versionName = APP_VERSION_NAME
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Configuración NDK para PaddleOCR
+        // Solo arm64-v8a (dispositivos modernos 2016+)
+        ndk {
+            abiFilters.add("arm64-v8a")
+        }
     }
 
     buildTypes {
@@ -112,6 +118,22 @@ android {
     buildFeatures {
         compose = true
     }
+
+    // Configuración NDK para PaddleOCR
+    ndkVersion = "25.1.8937393"
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+
+    sourceSets {
+        getByName("main") {
+            jniLibs.srcDirs("src/main/jniLibs")
+        }
+    }
 }
 
 dependencies {
@@ -133,6 +155,9 @@ dependencies {
 
     // ML Kit Text Recognition
     implementation(libs.mlkit.text.recognition)
+
+    // Tesseract OCR - OpenMP variant para mejor rendimiento
+    implementation("cz.adaptech.tesseract4android:tesseract4android-openmp:4.9.0")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
